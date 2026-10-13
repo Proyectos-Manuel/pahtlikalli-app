@@ -13,8 +13,22 @@
   <header class="topbar">
     <button id="btn-atras" style="display:none">← Atrás</button>
     <h1 id="titulo">🌱 Pahtlikalli</h1>
-    <button id="btn-export">⬇ Exportar</button>
+    <!-- v2: forzar actualización de la app (service worker + caché) -->
+    <button id="btn-actualizar" title="Actualizar app" aria-label="Actualizar app">🔄</button>
+    <!-- v2: menú de backup (exportar / importar) -->
+    <button id="btn-backup" title="Backup de datos" aria-label="Backup de datos">💾 Backup</button>
   </header>
+
+  <!-- v2: menú de backup. Botones grandes y táctiles (ver styles.css) -->
+  <div class="menu-backdrop" id="menu-backdrop"></div>
+  <div class="menu-backup" id="menu-backup" role="menu" aria-label="Backup de datos">
+    <button class="btn full" id="btn-export-backup" role="menuitem">💾 Exportar backup (JSON completo)</button>
+    <button class="btn sec full" id="btn-import-backup" role="menuitem">📥 Importar backup…</button>
+    <button class="btn sec full" id="btn-export-csv" role="menuitem">📊 Exportar CSV (resumen)</button>
+    <button class="btn sec full" id="btn-cerrar-menu" role="menuitem">Cancelar</button>
+  </div>
+
+  <input type="file" id="input-backup" accept=".json,application/json" style="display:none">
 
   <main id="app"></main>
 

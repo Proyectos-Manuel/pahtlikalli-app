@@ -60,9 +60,24 @@ function esc(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function fmtMXN(n) {
+/* v2: se añade el parámetro `decimales` (por defecto 0, igual que antes)
+   para poder mostrar el precio por m² con 2 decimales sin tener que
+   cambiar ninguna de las llamadas que ya existían. */
+function fmtMXN(n, decimales = 0) {
   if (n == null || isNaN(n)) return '—';
-  return '$' + Number(n).toLocaleString('es-MX', { maximumFractionDigits: 0 });
+  return '$' + Number(n).toLocaleString('es-MX', {
+    minimumFractionDigits: decimales,
+    maximumFractionDigits: decimales
+  });
+}
+
+/* v2: precio por m² recalculado desde la superficie en ha.
+   Devuelve null si faltan datos (la tabla muestra "—" en ese caso). */
+function fmtPrecioM2(t) {
+  const ha = Number(t.superficie_ha);
+  const precio = Number(t.precio_total_mxn);
+  if (!ha || !precio || isNaN(ha) || isNaN(precio)) return null;
+  return precio / (ha * 10000);
 }
 
 function promedioCriterios(t) {
@@ -75,26 +90,60 @@ function contarFotos(t) {
   return (t.fotos?.length || 0) + t.criterios.reduce((a, c) => a + (c.fotos?.length || 0), 0);
 }
 
+/* ---------- Migración suave (v2) ----------
+   Rellena los campos que falten sin tocar la estructura de IndexedDB
+   (mismo DB_NAME / DB_VERSION / store). Así los datos que ya están
+   guardados en la tablet siguen funcionando tal cual, solo que se les
+   añade `enlace_earth: ''` y el resto de valores por defecto. */
+function normalizarTerreno(t, criteriosBase) {
+  const base = criteriosBase || [];
+  const ter = {
+    ...t,
+    contacto: t.contacto || { nombre: '', telefono: '', email: '', notas: '' },
+    enlace: t.enlace || '',
+    enlace_earth: t.enlace_earth || '',        // campo nuevo de la v2
+    fotos: t.fotos || [],
+    observaciones_generales: t.observaciones_generales || '',
+    fecha_visita: t.fecha_visita ?? null,
+    gps: t.gps ?? null,
+    criterios: Array.isArray(t.criterios) ? t.criterios : []
+  };
+
+  // Si el terreno no trae criterios (p. ej. recién importado), se generan
+  // a partir de los criterios base.
+  if (!ter.criterios.length && base.length) {
+    ter.criterios = base.map(c => ({
+      ...c, estado: 'Por Verificar', calificacion: 3, notas: '', fotos: []
+    }));
+  }
+
+  // Cada criterio debe tener siempre sus campos completos.
+  ter.criterios = ter.criterios.map(c => ({
+    ...c,
+    estado: c.estado || 'Por Verificar',
+    calificacion: typeof c.calificacion === 'number' ? c.calificacion : 3,
+    notas: c.notas || '',
+    fotos: c.fotos || []
+  }));
+
+  return ter;
+}
+
 /* ---------- Carga inicial ---------- */
 async function cargarDatos() {
   const guardado = await idbGet('terrenos');
-  if (guardado) return guardado;
+
+  if (guardado) {
+    // Migración suave: los datos guardados pueden no tener los campos nuevos.
+    const base = guardado.criterios_base || [];
+    guardado.terrenos = (guardado.terrenos || []).map(t => normalizarTerreno(t, base));
+    return guardado;
+  }
 
   const res = await fetch('data/terrenos.json');
   const base = await res.json();
 
-  base.terrenos = base.terrenos.map(t => ({
-    ...t,
-    contacto: t.contacto || { nombre: '', telefono: '', email: '', notas: '' },
-    enlace: t.enlace || '',
-    criterios: base.criterios_base.map(c => ({
-      ...c,
-      estado: 'Por Verificar',
-      calificacion: 3,
-      notas: '',
-      fotos: []
-    }))
-  }));
+  base.terrenos = (base.terrenos || []).map(t => normalizarTerreno(t, base.criterios_base));
 
   await idbSet('terrenos', base);
   return base;
@@ -102,6 +151,72 @@ async function cargarDatos() {
 
 async function guardarDatos() {
   await idbSet('terrenos', DATA);
+}
+
+/* ---------- v2: tabla resumen (va arriba de las tarjetas) ----------
+   Columnas: Terreno · Ubicación · ha · Precio total · $/m² · Promedio ·
+   Contacto · Enlaces. Al final, una fila de totales. La tabla se puede
+   desplazar en horizontal dentro de .tabla-wrap (ver styles.css). */
+function renderTablaResumen() {
+  if (!DATA.terrenos.length) return '';
+
+  let sumHa = 0, hayHa = false;
+  let sumPrecio = 0;
+  let sumProm = 0, nProm = 0;
+
+  const filas = DATA.terrenos.map(t => {
+    const ha = Number(t.superficie_ha);
+    const precio = Number(t.precio_total_mxn);
+    const m2 = fmtPrecioM2(t);
+    const prom = promedioCriterios(t);
+
+    if (ha && !isNaN(ha)) { sumHa += ha; hayHa = true; }
+    if (precio && !isNaN(precio)) sumPrecio += precio;
+    if (prom != null) { sumProm += prom; nProm++; }
+
+    // Enlaces: solo se pinta el botón si el campo tiene valor
+    const links = [
+      t.enlace_earth
+        ? `<a class="mini-link" href="${esc(t.enlace_earth)}" target="_blank" rel="noopener" title="Google Earth">🌍 Earth</a>`
+        : '',
+      t.enlace
+        ? `<a class="mini-link" href="${esc(t.enlace)}" target="_blank" rel="noopener" title="Enlace web">🔗 Web</a>`
+        : ''
+    ].join('');
+
+    return `
+      <tr data-id="${esc(t.id)}">
+        <td class="c-nombre">${esc(t.nombre)}</td>
+        <td class="c-ubic" title="${esc(t.ubicacion)}">${esc(t.ubicacion) || '—'}</td>
+        <td class="num">${t.superficie_ha ?? '—'}</td>
+        <td class="num">${fmtMXN(t.precio_total_mxn)}</td>
+        <td class="num">${m2 == null ? '—' : fmtMXN(m2, 2)}</td>
+        <td class="num">${prom == null ? '—' : prom.toFixed(1)}</td>
+        <td class="c-contacto">${esc(t.contacto?.nombre) || '—'}</td>
+        <td class="c-links">${links || '<span class="sin-enlace">—</span>'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="tabla-wrap">
+      <table class="tabla-resumen" id="tabla-resumen">
+        <thead>
+          <tr>
+            <th>Terreno</th>
+            <th>Ubicación</th>
+            <th class="num">ha</th>
+            <th class="num">Precio total</th>
+            <th class="num">$ / m²</th>
+            <th class="num">Promedio</th>
+            <th>Contacto</th>
+            <th>Enlaces</th>
+          </tr>
+        </thead>
+        <tbody>${filas}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 /* ---------- Render: lista de terrenos ---------- */
@@ -133,14 +248,25 @@ function renderLista() {
 
   document.getElementById('app').innerHTML = `
     <p style="color:var(--gris);font-size:14px;margin-top:0">
-      Toca un terreno para abrir su ficha. Todo se guarda automáticamente en tu tablet.
+      Toca un terreno (en la tabla o en su tarjeta) para abrir su ficha.
+      Todo se guarda automáticamente en tu tablet.
     </p>
+    ${renderTablaResumen()}
     <button class="btn full" id="btn-nuevo" style="margin-bottom:16px">➕ Nuevo terreno</button>
     ${html}
   `;
 
   document.querySelectorAll('.terreno-card').forEach(el => {
     el.addEventListener('click', () => abrirTerreno(el.dataset.id));
+  });
+
+  // v2: tocar una fila de la tabla abre la misma ficha que la tarjeta.
+  // Si el toque cae sobre un enlace 🌍/🔗 se deja pasar y NO se abre la ficha.
+  document.querySelectorAll('#tabla-resumen tbody tr').forEach(tr => {
+    tr.addEventListener('click', (ev) => {
+      if (ev.target.closest('a')) return;
+      abrirTerreno(tr.dataset.id);
+    });
   });
 
   document.getElementById('btn-nuevo').addEventListener('click', mostrarFormularioNuevo);
@@ -172,6 +298,11 @@ function renderFicha() {
       <p><strong>Agua:</strong> ${esc(t.agua_registrada) || '—'}</p>
       <p><strong>Notas:</strong> ${esc(t.notas_clave) || '—'}</p>
       ${t.enlace ? `<p><strong>Enlace:</strong> <a href="${esc(t.enlace)}" target="_blank" rel="noopener">${esc(t.enlace)}</a></p>` : ''}
+      ${t.enlace_earth ? `
+        <div class="acciones">
+          <a class="btn sec" href="${esc(t.enlace_earth)}" target="_blank" rel="noopener"
+             style="text-decoration:none;display:inline-flex;align-items:center">🌍 Ver en Google Earth</a>
+        </div>` : ''}
     </div>
 
     <div class="ficha-info">
@@ -415,6 +546,9 @@ function mostrarFormularioNuevo() {
       <label>Enlace (Facebook, portal, etc.)</label>
       <input type="text" id="n-enlace" inputmode="url" placeholder="https://...">
 
+      <label>Enlace Google Earth</label>
+      <input type="text" id="n-enlace-earth" inputmode="url" placeholder="https://earth.google.com/...">
+
       <div class="acciones" style="margin-top:16px">
         <button class="btn full" id="btn-guardar-nuevo">💾 Guardar terreno</button>
         <button class="btn sec full" id="btn-cancelar-nuevo">Cancelar</button>
@@ -442,6 +576,7 @@ function mostrarFormularioNuevo() {
       agua_registrada: document.getElementById('n-agua').value.trim(),
       notas_clave: document.getElementById('n-notas').value.trim(),
       enlace: document.getElementById('n-enlace').value.trim(),
+      enlace_earth: document.getElementById('n-enlace-earth').value.trim(),
       estatus: '',
       fecha_visita: null,
       gps: null,
@@ -492,6 +627,9 @@ function mostrarFormularioEditar(t) {
       <label>Enlace</label>
       <input type="text" id="e-enlace" inputmode="url" value="${esc(t.enlace || '')}">
 
+      <label>Enlace Google Earth</label>
+      <input type="text" id="e-enlace-earth" inputmode="url" placeholder="https://earth.google.com/..." value="${esc(t.enlace_earth || '')}">
+
       <div class="acciones" style="margin-top:16px">
         <button class="btn full" id="btn-guardar-edicion">💾 Guardar cambios</button>
         <button class="btn sec full" id="btn-cancelar-edicion">Cancelar</button>
@@ -520,6 +658,7 @@ function mostrarFormularioEditar(t) {
     t.agua_registrada = document.getElementById('e-agua').value.trim();
     t.notas_clave = document.getElementById('e-notas').value.trim();
     t.enlace = document.getElementById('e-enlace').value.trim();
+    t.enlace_earth = document.getElementById('e-enlace-earth').value.trim();
 
     await guardarDatos();
     toast('Datos actualizados');
@@ -592,17 +731,45 @@ function capturarGPS() {
   );
 }
 
-/* ---------- Exportar ---------- */
-async function exportar() {
-  const json = JSON.stringify(DATA, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
+/* ============================================================
+   v2 · BACKUP COMPLETO (exportar / importar)
+   ============================================================ */
+
+/* Descarga un Blob con el nombre indicado. Helper compartido por
+   el backup y por el CSV. */
+function descargarBlob(blob, nombre) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `pahtlikalli_${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = nombre;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  // La URL se libera un poco después para no cortar la descarga en curso.
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
 
+/* EXPORTAR BACKUP: un único JSON con TODO el estado guardado en IndexedDB
+   (terrenos, criterios y sus calificaciones, fotos, GPS, contacto, enlace,
+   enlace_earth, observaciones y fechas).
+   Las fotos viajan dentro como dataURL, igual que están guardadas. */
+async function exportarBackup() {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const backup = {
+    app: 'pahtlikalli',
+    tipo: 'backup',
+    formato: 1,
+    exportado: new Date().toISOString(),
+    data: DATA
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  descargarBlob(blob, `pahtlikalli_backup_${hoy}.json`);
+  toast('Backup descargado');
+}
+
+/* EXPORTAR CSV: se mantiene el mismo formato de siempre
+   (queda como opción secundaria dentro del menú de backup). */
+async function exportarCSV() {
   const filas = [['Terreno', 'Ubicación', 'ha', 'Precio', 'Promedio', 'GPS', 'Fotos', 'Contacto', 'Teléfono', 'Email', 'Enlace', 'Observaciones']];
   DATA.terrenos.forEach(t => {
     const prom = promedioCriterios(t);
@@ -620,14 +787,120 @@ async function exportar() {
   });
   const csv = filas.map(f => f.map(v => `"${(v ?? '').toString().replace(/"/g, '""')}"`).join(',')).join('\n');
   const blobCsv = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
-  const urlCsv = URL.createObjectURL(blobCsv);
-  const a2 = document.createElement('a');
-  a2.href = urlCsv;
-  a2.download = `pahtlikalli_${new Date().toISOString().slice(0, 10)}.csv`;
-  a2.click();
-  URL.revokeObjectURL(urlCsv);
+  descargarBlob(blobCsv, `pahtlikalli_${new Date().toISOString().slice(0, 10)}.csv`);
+  toast('CSV descargado');
+}
 
-  toast('Exportado JSON + CSV');
+/* IMPORTAR BACKUP.
+   Acepta dos formatos:
+   - el nuevo:   { tipo: 'backup', data: { criterios_base, terrenos, ... } }
+   - el antiguo: { proyecto, criterios_base, terrenos, ... }  (la exportación
+     JSON que hacía la v1) → así los backups antiguos siguen sirviendo.
+   Pregunta con confirm(): ACEPTAR = fusionar, CANCELAR = reemplazar. */
+async function importarBackup(file) {
+  try {
+    const texto = await file.text();
+
+    let json;
+    try {
+      json = JSON.parse(texto);
+    } catch (e) {
+      throw new Error('el archivo no es un JSON válido');
+    }
+
+    // --- Validación de estructura ANTES de tocar nada ---
+    if (!json || typeof json !== 'object') throw new Error('contenido vacío o inválido');
+    const data = (json.data && Array.isArray(json.data.terrenos)) ? json.data : json;
+    if (!data || typeof data !== 'object' || !Array.isArray(data.terrenos)) {
+      throw new Error('estructura no reconocida (falta la lista "terrenos")');
+    }
+
+    const validos = data.terrenos.filter(t => t && typeof t === 'object' && t.id && t.nombre);
+    if (data.terrenos.length && !validos.length) {
+      throw new Error('ningún terreno del archivo tiene "id" y "nombre"');
+    }
+
+    // Los criterios base se toman del archivo si los trae; si no, se conservan
+    // los actuales para poder generar los criterios que falten en cada terreno.
+    const criteriosBase = (Array.isArray(data.criterios_base) && data.criterios_base.length)
+      ? data.criterios_base
+      : DATA.criterios_base;
+
+    const entrantes = validos.map(t => normalizarTerreno(t, criteriosBase));
+
+    const fusionar = confirm(
+      `El backup contiene ${entrantes.length} terreno(s).\n\n` +
+      `ACEPTAR  →  FUSIONAR: los del mismo id se sobrescriben y los nuevos se añaden.\n\n` +
+      `CANCELAR →  REEMPLAZAR: se borran los ${DATA.terrenos.length} terrenos actuales y quedan solo los del archivo.`
+    );
+
+    let añadidos = 0, actualizados = 0, reemplazados = 0;
+
+    if (fusionar) {
+      entrantes.forEach(t => {
+        const i = DATA.terrenos.findIndex(x => x.id === t.id);
+        if (i === -1) { DATA.terrenos.push(t); añadidos++; }
+        else { DATA.terrenos[i] = t; actualizados++; }
+      });
+    } else {
+      // Rama destructiva: una segunda confirmación explícita antes de borrar.
+      const ok = confirm(
+        `⚠️ ¿Seguro? Se van a BORRAR los ${DATA.terrenos.length} terrenos actuales ` +
+        `y sustituirlos por los ${entrantes.length} del archivo.`
+      );
+      if (!ok) { toast('Importación cancelada'); return; }
+
+      DATA.terrenos = entrantes;
+      DATA.criterios_base = criteriosBase;
+      if (data.proyecto) DATA.proyecto = data.proyecto;
+      if (data.version) DATA.version = data.version;
+      reemplazados = entrantes.length;
+    }
+
+    await guardarDatos();
+    TERRENO_ACTUAL = null;
+    renderLista();
+
+    toast(fusionar
+      ? `Importado: ${añadidos} añadido(s), ${actualizados} actualizado(s)`
+      : `Reemplazado: ${reemplazados} terreno(s)`);
+  } catch (err) {
+    toast('Error al importar: ' + err.message);
+  }
+}
+
+/* ACTUALIZAR APP: desregistra el service worker, vacía las cachés y recarga.
+   Los datos de IndexedDB NO se tocan. */
+async function actualizarApp() {
+  if (!confirm('¿Actualizar la app?\n\nSe recargará la versión más reciente. Tus terrenos, fotos y contactos NO se borran.')) return;
+
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch (e) {
+    // Si algo falla se recarga igual: init() vuelve a registrar el service worker.
+  }
+
+  // Nota: location.reload(true) está obsoleto y los navegadores actuales
+  // ignoran el parámetro, por eso solo se llama a reload().
+  location.reload();
+}
+
+/* ---------- v2 · Menú de backup (header) ---------- */
+function abrirMenuBackup() {
+  document.getElementById('menu-backup').classList.add('show');
+  document.getElementById('menu-backdrop').classList.add('show');
+}
+
+function cerrarMenuBackup() {
+  document.getElementById('menu-backup').classList.remove('show');
+  document.getElementById('menu-backdrop').classList.remove('show');
 }
 
 /* ---------- Init ---------- */
@@ -641,7 +914,34 @@ async function init() {
     renderLista();
   });
 
-  document.getElementById('btn-export').addEventListener('click', exportar);
+  // v2: botón "🔄" (forzar actualización) y menú de backup
+  document.getElementById('btn-actualizar').addEventListener('click', actualizarApp);
+
+  document.getElementById('btn-backup').addEventListener('click', abrirMenuBackup);
+  document.getElementById('menu-backdrop').addEventListener('click', cerrarMenuBackup);
+  document.getElementById('btn-cerrar-menu').addEventListener('click', cerrarMenuBackup);
+
+  document.getElementById('btn-export-backup').addEventListener('click', () => {
+    cerrarMenuBackup();
+    exportarBackup();
+  });
+
+  document.getElementById('btn-export-csv').addEventListener('click', () => {
+    cerrarMenuBackup();
+    exportarCSV();
+  });
+
+  document.getElementById('btn-import-backup').addEventListener('click', () => {
+    cerrarMenuBackup();
+    const inp = document.getElementById('input-backup');
+    inp.value = '';   // permite volver a elegir el mismo archivo
+    inp.click();
+  });
+
+  document.getElementById('input-backup').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (file) await importarBackup(file);
+  });
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});

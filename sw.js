@@ -1,4 +1,9 @@
-const CACHE = 'pahtlikalli-v1';
+/* v2: se sube la versión de caché. El service worker usa estrategia
+   cache-first, así que si el nombre de la caché no cambia, el navegador
+   sigue sirviendo el app.js/index.html antiguos aunque se publique la v2.
+   Al cambiar el nombre, el nuevo SW se instala, vuelve a descargar los
+   assets y el handler de 'activate' borra la caché vieja. */
+const CACHE = 'pahtlikalli-v2';
 const ASSETS = [
   './',
   './index.html',

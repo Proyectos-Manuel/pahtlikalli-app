@@ -33,6 +33,7 @@ header.topbar button {
   background: transparent; border: 1px solid rgba(255,255,255,.4);
   color: white; padding: 8px 12px; border-radius: 8px;
   font-size: 15px;
+  min-height: 44px;   /* v2: objetivo táctil cómodo en tablet */
 }
 
 main { padding: 16px; max-width: 900px; margin: 0 auto; }
@@ -173,4 +174,110 @@ textarea { min-height: 70px; resize: vertical; }
   font-weight: 600;
   margin-top: 10px;
   margin-bottom: 2px;
+}
+
+/* ============================================================
+   v2 · TABLA RESUMEN DE TERRENOS (arriba de las tarjetas)
+   ============================================================ */
+.tabla-wrap {
+  overflow: auto;            /* scroll horizontal en móvil/tablet */
+  max-height: 70vh;          /* al desplazar, el encabezado queda fijo */
+  background: white;
+  border-radius: 14px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  margin-bottom: 16px;
+  -webkit-overflow-scrolling: touch;
+}
+
+table.tabla-resumen {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 760px;          /* evita que las columnas se aplasten */
+  font-size: 14px;           /* mínimo legible en tablet Android */
+}
+
+table.tabla-resumen th {
+  position: sticky; top: 0; z-index: 2;   /* encabezados fijos */
+  background: var(--verde-oscuro);
+  color: white;
+  text-align: left;
+  white-space: nowrap;
+  font-size: 14px;
+  padding: 12px 10px;
+}
+table.tabla-resumen th.num { text-align: right; }
+
+table.tabla-resumen td {
+  padding: 8px 10px;
+  height: 44px;              /* filas táctiles (>= 40px) */
+  border-bottom: 1px solid var(--borde);
+  vertical-align: middle;
+}
+
+table.tabla-resumen tbody tr { cursor: pointer; }
+table.tabla-resumen tbody tr:nth-child(even) { background: #f7f5f0; }  /* zebra */
+table.tabla-resumen tbody tr:hover { background: #eaf4ee; }
+table.tabla-resumen tbody tr:active { background: var(--verde-claro); }
+
+table.tabla-resumen td.num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+table.tabla-resumen td.c-nombre { font-weight: 600; color: var(--verde-oscuro); }
+table.tabla-resumen td.c-ubic {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;   /* ubicaciones largas, truncadas */
+  white-space: nowrap;
+  color: var(--gris);
+}
+
+
+.tabla-resumen .sin-enlace { color: var(--gris); }
+
+/* Botones chicos de enlaces (🌍 Earth / 🔗 Web) dentro de la tabla */
+.mini-link {
+  display: inline-block;
+  padding: 6px 10px;
+  margin-right: 4px;
+  border-radius: 8px;
+  background: var(--verde-claro);
+  color: var(--verde-oscuro);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   v2 · MENÚ DE BACKUP (header)
+   ============================================================ */
+.menu-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.35);
+  z-index: 150;
+  display: none;
+}
+.menu-backdrop.show { display: block; }
+
+.menu-backup {
+  position: fixed;
+  top: 68px; left: 50%; transform: translateX(-50%);
+  width: min(92vw, 400px);
+  z-index: 160;
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  background: white;
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.28);
+}
+.menu-backup.show { display: flex; }
+
+.menu-backup .btn {
+  min-height: 54px;          /* botones grandes y táctiles */
+  font-size: 16px;
+  text-align: left;
 }
