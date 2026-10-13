@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1b3a2b">
+  <title>Pahtlikalli - Fichas de Terreno</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="icons/icon-192.png">
+</head>
+<body>
+  <header class="topbar">
+    <button id="btn-atras" style="display:none">← Atrás</button>
+    <h1 id="titulo">🌱 Pahtlikalli</h1>
+    <button id="btn-export">⬇ Exportar</button>
+  </header>
+
+  <main id="app"></main>
+
+  <div class="toast" id="toast"></div>
+
+  <div class="modal" id="modal-foto">
+    <button class="cerrar" onclick="document.getElementById('modal-foto').classList.remove('show')">×</button>
+    <img id="modal-img" src="" alt="">
+  </div>
+
+  <input type="file" id="input-foto" accept="image/*" capture="environment" style="display:none">
+  <input type="file" id="input-foto-criterio" accept="image/*" capture="environment" style="display:none">
+
+  <script src="app.js"></script>
+</body>
+</html>
